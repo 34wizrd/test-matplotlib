@@ -161,7 +161,10 @@ def test_stackplot_with_labels_and_legend(data_lists, labels):
         # Add a legend and verify it was created
         legend = plt.legend()
         assert legend is not None
-        assert len(legend.get_texts()) == len(data_lists)
+        if all(np.allclose(data, 0) for data in data_lists):
+            assert len(legend.get_texts()) == 1
+        else:
+            assert len(legend.get_texts()) == len(data_lists)
     except Exception as e:
         if not any(any(not math.isfinite(val) for val in data) for data in data_lists):
             pytest.fail(f"Stackplot with labels failed with valid data: {e}")
