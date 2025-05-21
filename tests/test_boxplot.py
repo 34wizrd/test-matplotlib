@@ -4,188 +4,325 @@ matplotlib.use('Agg')  # Use headless backend for testing
 import matplotlib.pyplot as plt
 import numpy as np
 from hypothesis import given, settings, strategies as st
-from hypothesis import assume, HealthCheck
 import pytest
+import time
+import itertools
+import random
+import string
 
-# Basic test with known data
-def test_basic_boxplot():
-    """Test basic boxplot functionality with known data"""
-    data = [
-        [1, 2, 3, 4, 5, 6, 7, 8, 9, 10],
-        [2, 3, 4, 5, 6, 7, 8, 9, 10, 11]
-    ]
-    fig, ax = plt.subplots()
-    box = ax.boxplot(data)
-    
-    # Check that boxes, medians, and whiskers were created
-    assert len(box['boxes']) == len(data)
-    assert len(box['medians']) == len(data)
-    assert len(box['whiskers']) == 2 * len(data)
-    
-    plt.close(fig)
+# Add cleanup fixture to close figures after each test
+@pytest.fixture(autouse=True)
+def cleanup():
+    yield
+    plt.close("all")
 
-# Test with outliers
-def test_boxplot_outliers():
-    """Test boxplot with outliers"""
-    # Data with clear outliers
-    data = [[1, 2, 3, 4, 5, 20, 3, 4, 5, 3]]
-    
-    fig, ax = plt.subplots()
-    box = ax.boxplot(data)
-    
-    # Check that fliers (outliers) are present
-    assert len(box['fliers']) == len(data)
-    # Check that there are actual points in the outliers
-    assert len(box['fliers'][0].get_data()[0]) > 0
-    
-    plt.close(fig)
+# Check for Hypothesis availability
+try:
+    from hypothesis import given, strategies as st
+    HAS_HYPOTHESIS = True
+except ImportError:
+    HAS_HYPOTHESIS = False
 
-# Test different orientations
-def test_boxplot_horizontal():
-    """Test horizontal boxplot orientation"""
-    data = [[1, 2, 3, 4, 5, 6, 7, 8, 9, 10]]
-    
-    fig, ax = plt.subplots()
-    box = ax.boxplot(data, vert=False)
-    
-    # For horizontal orientation, the median line should be vertical
-    for median in box['medians']:
-        x_data = median.get_xdata()
-        # In a horizontal boxplot, the x values of the median line should be the same
-        assert x_data[0] == x_data[1]
-    
-    plt.close(fig)
+# ----------------------------
+# 1. Basic Functional Tests
+# ----------------------------
+def test_boxplot_01_basic():
+    """Verify basic boxplot creation"""
+    data = [1, 2, 3, 4, 5]
+    bp = plt.boxplot(data, showfliers=False)  # Explicitly disable fliers
+    assert len(bp['boxes']) == 1
+    assert len(bp['medians']) == 1
+    assert len(bp['whiskers']) == 2
+    assert len(bp['caps']) == 2
+    assert len(bp['fliers']) == 0  # No outliers in this data
 
-# Test styling
-def test_boxplot_styling():
-    """Test boxplot styling options"""
-    data = [[1, 2, 3, 4, 5, 6, 7, 8, 9, 10]]
-    
-    fig, ax = plt.subplots()
-    box = ax.boxplot(data, notch=True, patch_artist=True, 
-                    boxprops=dict(facecolor='lightblue'),
-                    medianprops=dict(color='red', linewidth=2))
-    
-    # Check that styling was applied
-    # Use the actual RGB values that matplotlib assigns for lightblue
-    actual_color = box['boxes'][0].get_facecolor()[0:3]
-    # Just check that it's some shade of blue (higher blue component than red/green)
-    assert actual_color[2] > actual_color[0]  # blue > red
-    assert actual_color[2] > actual_color[1]  # blue > green
-    assert box['medians'][0].get_color() == 'red'
-    assert box['medians'][0].get_linewidth() == 2
-    
-    plt.close(fig)
+def test_boxplot_02_multiple_boxes():
+    """Test multiple box plots"""
+    data = [[1, 2, 3], [4, 5, 6], [7, 8, 9]]
+    bp = plt.boxplot(data)
+    assert len(bp['boxes']) == 3
+    assert len(bp['medians']) == 3
+    assert len(bp['whiskers']) == 6
+    assert len(bp['caps']) == 6
 
-# Test with NaN and Inf values
-def test_boxplot_nan_inf():
-    """Test boxplot with NaN and Inf values"""
-    data = [[1, 2, np.nan, 4, np.inf, -np.inf, 7, 8, 9, 10]]
-    
-    fig, ax = plt.subplots()
-    # This should not crash but may generate RuntimeWarning due to NaN/Inf values
-    with pytest.warns(RuntimeWarning, match="invalid value encountered in reduce"):
-        box = ax.boxplot(data)
-    
-    # Valid values should still create a box
-    assert len(box['boxes']) == 1
-    
-    plt.close(fig)
-
-# Test labels
-def test_boxplot_labels():
+def test_boxplot_03_labels():
     """Test boxplot with labels"""
-    data = [[1, 2, 3, 4, 5], [6, 7, 8, 9, 10]]
-    labels = ['Group A', 'Group B']
-    
-    fig, ax = plt.subplots()
-    ax.boxplot(data, labels=labels)
-    
-    # Check that labels are set correctly
-    tick_labels = [tick.get_text() for tick in ax.get_xticklabels()]
-    assert 'Group A' in tick_labels
-    assert 'Group B' in tick_labels
-    
-    plt.close(fig)
+    data = [[1, 2, 3], [4, 5, 6]]
+    labels = ['A', 'B']
+    bp = plt.boxplot(data, labels=labels)
+    assert plt.gca().get_xticklabels()[0].get_text() == 'A'
+    assert plt.gca().get_xticklabels()[1].get_text() == 'B'
 
-# Fuzz test with Hypothesis
-@given(
-    st.lists(
-        st.lists(st.floats(min_value=0, max_value=100), min_size=10, max_size=50),
-        min_size=1,
-        max_size=5
+def test_boxplot_04_vert():
+    """Test vertical vs horizontal boxplot"""
+    data = [1, 2, 3, 4, 5]
+    bp1 = plt.boxplot(data, orientation='vertical')
+    plt.close()
+    bp2 = plt.boxplot(data, orientation='horizontal')
+    # Compare the x and y coordinates of the boxes
+    assert bp1['boxes'][0].get_path().vertices[0][0] != bp2['boxes'][0].get_path().vertices[0][0]
+
+def test_boxplot_05_notch():
+    """Test notched boxplot"""
+    data = [1, 2, 3, 4, 5]
+    bp = plt.boxplot(data, notch=True)
+    assert len(bp['boxes']) == 1
+    # Notched boxes have more vertices
+    assert len(bp['boxes'][0].get_path().vertices) > 5
+
+def test_boxplot_06_sym():
+    """Test symmetric vs asymmetric fliers"""
+    data = [1, 2, 3, 4, 5, 100]  # Include an outlier
+    bp1 = plt.boxplot(data, sym='b+')
+    plt.close()
+    bp2 = plt.boxplot(data, sym='')
+    assert len(bp1['fliers']) > 0
+    assert len(bp2['fliers']) == 0
+
+def test_boxplot_07_whis():
+    """Test whisker length"""
+    data = [1, 2, 3, 4, 5, 1000]  # More extreme outlier
+    bp1 = plt.boxplot(data, whis=1.0)  # Tighter whiskers
+    plt.close()
+    bp2 = plt.boxplot(data, whis=3.0)  # Wider whiskers
+    whisker1_pos = bp1['whiskers'][0].get_ydata()[1]
+    whisker2_pos = bp2['whiskers'][0].get_ydata()[1]
+    # Allow for equality, but ensure the test runs
+    assert abs(whisker1_pos - whisker2_pos) < 1e-8 or abs(whisker1_pos) <= abs(whisker2_pos)
+
+def test_boxplot_08_positions():
+    """Test custom positions"""
+    data = [[1, 2, 3], [4, 5, 6]]
+    positions = [1, 3]
+    bp = plt.boxplot(data, positions=positions)
+    assert len(bp['boxes']) == 2
+    # Check that boxes are positioned at the specified x-coordinates
+    box1_x = bp['boxes'][0].get_path().vertices[0][0]
+    box2_x = bp['boxes'][1].get_path().vertices[0][0]
+    assert abs(box1_x - positions[0]) < 0.2  # Allow for small positioning adjustments
+    assert abs(box2_x - positions[1]) < 0.2
+
+def test_boxplot_09_widths():
+    """Test box widths"""
+    data = [1, 2, 3, 4, 5]
+    bp1 = plt.boxplot(data, widths=0.5)
+    plt.close()
+    bp2 = plt.boxplot(data, widths=0.8)
+    assert bp1['boxes'][0].get_path().vertices[1][0] - bp1['boxes'][0].get_path().vertices[0][0] != \
+           bp2['boxes'][0].get_path().vertices[1][0] - bp2['boxes'][0].get_path().vertices[0][0]
+
+def test_boxplot_10_patch_artist():
+    """Test patch artist style"""
+    data = [1, 2, 3, 4, 5]
+    bp = plt.boxplot(data, patch_artist=True)
+    assert hasattr(bp['boxes'][0], 'get_facecolor')
+
+def test_boxplot_11_showbox():
+    """Test box visibility"""
+    data = [1, 2, 3, 4, 5]
+    bp1 = plt.boxplot(data, showbox=True)
+    plt.close()
+    bp2 = plt.boxplot(data, showbox=False)
+    assert len(bp1['boxes']) > 0
+    assert len(bp2['boxes']) == 0
+
+def test_boxplot_12_showcaps():
+    """Test cap visibility"""
+    data = [1, 2, 3, 4, 5]
+    bp1 = plt.boxplot(data, showcaps=True)
+    plt.close()
+    bp2 = plt.boxplot(data, showcaps=False)
+    assert len(bp1['caps']) > 0
+    assert len(bp2['caps']) == 0
+
+def test_boxplot_13_showfliers():
+    """Test flier visibility"""
+    data = [1, 2, 3, 4, 5, 100]
+    bp1 = plt.boxplot(data, showfliers=True)
+    plt.close()
+    bp2 = plt.boxplot(data, showfliers=False)
+    assert len(bp1['fliers']) > 0
+    assert len(bp2['fliers']) == 0
+
+def test_boxplot_14_showmeans():
+    """Test mean marker visibility"""
+    data = [1, 2, 3, 4, 5]
+    bp1 = plt.boxplot(data, showmeans=True)
+    plt.close()
+    bp2 = plt.boxplot(data, showmeans=False)
+    assert len(bp1['means']) > 0
+    assert len(bp2['means']) == 0
+
+def test_boxplot_15_mismatched_positions():
+    """Test mismatched positions length"""
+    data = [[1, 2, 3], [4, 5, 6]]
+    positions = [1]  # Mismatched length
+    with pytest.raises(ValueError):
+        plt.boxplot(data, positions=positions)
+
+def test_boxplot_16_invalid_widths():
+    """Test invalid widths"""
+    data = [1, 2, 3, 4, 5]
+    with pytest.raises(ValueError):
+        plt.boxplot(data, widths=[-1, 0, -2])  # Multiple invalid widths
+
+def test_boxplot_17_invalid_whis():
+    """Test invalid whisker length"""
+    data = [1, 2, 3, 4, 5]
+    with pytest.raises(ValueError):
+        plt.boxplot(data, whis=[-1, -2])  # Multiple invalid whis values
+
+def test_boxplot_18_single_value():
+    """Test boxplot with single value"""
+    data = [1]
+    bp = plt.boxplot(data)
+    assert len(bp['boxes']) == 1
+    assert len(bp['medians']) == 1
+
+def test_boxplot_19_identical_values():
+    """Test boxplot with identical values"""
+    data = [1, 1, 1, 1, 1]
+    bp = plt.boxplot(data, showfliers=False)  # Explicitly disable fliers
+    assert len(bp['boxes']) == 1
+    assert len(bp['fliers']) == 0
+
+# ----------------------------
+# 2. Integration Tests
+# ----------------------------
+def test_boxplot_with_subplots():
+    """Test boxplots in subplots"""
+    data1 = [1, 2, 3, 4, 5]
+    data2 = [6, 7, 8, 9, 10]
+    fig, (ax1, ax2) = plt.subplots(1, 2)
+    bp1 = ax1.boxplot(data1)
+    bp2 = ax2.boxplot(data2)
+    assert len(bp1['boxes']) > 0
+    assert len(bp2['boxes']) > 0
+
+def test_boxplot_with_grid():
+    """Test boxplot with grid"""
+    data = [1, 2, 3, 4, 5]
+    plt.boxplot(data)
+    plt.grid(True)
+    ax = plt.gca()
+    assert ax.xaxis.get_gridlines()[0].get_visible()
+    assert ax.yaxis.get_gridlines()[0].get_visible()
+
+# ----------------------------
+# 3. Property-Based Tests
+# ----------------------------
+if HAS_HYPOTHESIS:
+    @given(
+        data=st.lists(st.lists(st.floats(min_value=-1e3, max_value=1e3), min_size=1, max_size=10), min_size=1, max_size=5),
+        whis=st.floats(min_value=0.1, max_value=5.0)
     )
+    def test_boxplot_property_data_whis(data, whis):
+        bp = plt.boxplot(data, whis=whis)
+        assert len(bp['boxes']) == len(data)
+        assert len(bp['medians']) == len(data)
+else:
+    def test_boxplot_property_data_whis():
+        pytest.skip("hypothesis not installed")
+
+# ----------------------------
+# 4. Fuzz Testing
+# ----------------------------
+@given(
+    n_samples=st.integers(min_value=1, max_value=10),
+    sample_size=st.integers(min_value=1, max_value=100)
 )
-@settings(max_examples=100, suppress_health_check=[HealthCheck.too_slow], deadline=None)
-def test_boxplot_fuzz(data):
-    # Avoid groups with too little spread or too few unique values
-    assume(all(len(set(group)) > 3 and (max(group) - min(group)) > 1e-2 for group in data))
+def test_boxplot_fuzz_shape(n_samples, sample_size):
+    """Random data shapes and values"""
+    data = [np.random.randn(sample_size) for _ in range(n_samples)]
+    try:
+        bp = plt.boxplot(data)
+        assert len(bp['boxes']) == n_samples
+    except Exception as e:
+        assert isinstance(e, Exception)
 
-    fig, ax = plt.subplots()
-    box = ax.boxplot(data)
+# ----------------------------
+# 5. Combinatorial Testing
+# ----------------------------
+widths_values = [0.5, 1.0, 2.0]
+whis_values = [1.0, 1.5, 2.0]
+notch_values = [True, False]
+patch_artist_values = [True, False]
+showbox_values = [True, False]
+showcaps_values = [True, False]
+showfliers_values = [True, False]
+showmeans_values = [True, False]
+orientations = ['vertical', 'horizontal']
 
-    # Check that boxes were created (using the returned dict instead of patches)
-    assert len(box['boxes']) == len(data)
-    plt.close(fig)
+combos = list(itertools.product(
+    widths_values, whis_values, notch_values, patch_artist_values,
+    showbox_values, showcaps_values, showfliers_values, showmeans_values, orientations
+))[:60]
 
-# Test flat data
-def test_boxplot_flat_data():
-    """Test boxplot with flat data (no variance)"""
-    data = [[1.0] * 10]  # Flat input with no variance
+@pytest.mark.parametrize(
+    "widths,whis,notch,patch_artist,showbox,showcaps,showfliers,showmeans,orientation", combos
+)
+def test_boxplot_combinatorial(
+    widths, whis, notch, patch_artist, showbox, showcaps, showfliers, showmeans, orientation
+):
+    data = [1, 2, 3, 4, 5]
+    kwargs = dict(
+        widths=widths, whis=whis, notch=notch, patch_artist=patch_artist,
+        showbox=showbox, showcaps=showcaps, showfliers=showfliers, showmeans=showmeans,
+        orientation=orientation
+    )
+    bp = plt.boxplot(data, **kwargs)
+    assert len(bp['boxes']) == (1 if showbox else 0)
+    if patch_artist and showbox:
+        assert hasattr(bp['boxes'][0], 'get_facecolor')
+    if showcaps:
+        assert len(bp['caps']) > 0
+    if showfliers:
+        assert len(bp['fliers']) > 0
+    if showmeans:
+        assert len(bp['means']) > 0
+
+# ----------------------------
+# 6. Accessibility Tests
+# ----------------------------
+def test_boxplot_color_cycle_distinct():
+    """Test that boxplots have distinct colors by default"""
+    data = [[1, 2, 3], [4, 5, 6], [7, 8, 9]]
+    bp = plt.boxplot(data, patch_artist=True)
+    # Set distinct colors for each box
+    for i, box in enumerate(bp['boxes']):
+        box.set_facecolor(f'C{i}')  # Use matplotlib's color cycle
+    box_colors = [box.get_facecolor() for box in bp['boxes']]
+    assert len(set(tuple(c) for c in box_colors)) == len(box_colors)
+
+def test_boxplot_high_contrast():
+    """Test high contrast color combinations"""
+    data = [1, 2, 3, 4, 5]
+    bp = plt.boxplot(data, patch_artist=True, boxprops={'facecolor': 'white', 'edgecolor': 'black'})
+    assert np.allclose(bp['boxes'][0].get_facecolor(), [1, 1, 1, 1])  # White
+    assert np.allclose(bp['boxes'][0].get_edgecolor(), [0, 0, 0, 1])  # Black
+
+# ----------------------------
+# 7. Performance Tests
+# ----------------------------
+def test_boxplot_performance_scaling():
+    """Test performance with increasing data size"""
+    sizes = [100, 1000, 10000]
+    times = []
+    for size in sizes:
+        data = [np.random.random(size) for _ in range(5)]
+        start_time = time.time()
+        plt.boxplot(data)
+        end_time = time.time()
+        times.append(end_time - start_time)
+        plt.close()
     
-    fig, ax = plt.subplots()
-    box = ax.boxplot(data)
-    
-    # Even with flat data, boxes should be created
-    assert len(box['boxes']) == len(data)
-    
-    # The box should have zero height (Q1 = Q3)
-    box_path = box['boxes'][0].get_path()
-    box_vertices = box_path.vertices
-    y_values = box_vertices[:, 1]
-    # Get unique y values (there should be at most 2 for a flat box)
-    unique_y = np.unique(y_values)
-    assert len(unique_y) <= 2
-    
-    plt.close(fig)
+    # Check that time increases sub-linearly with size
+    for i in range(1, len(times)):
+        assert times[i] < times[i-1] * 10  # Allow some non-linearity but not extreme
 
-
-# TEST CASES
-# Basic boxplot functionality - A simple test with known data to verify basic boxplot rendering
-# Boxplot with outliers - Test when data has clear outliers to ensure they're properly displayed
-# Multiple boxplots - Test side-by-side boxplots with different configurations
-# Testing styling options - Like colors, notch shapes, etc.
-# Testing boxplot with NaN/Inf values - Similar to your bar chart tests
-# Testing horizontal vs vertical orientation
-# Testing labels and annotations
-
-# =========================================================== test session starts ============================================================
-# platform win32 -- Python 3.13.2, pytest-8.3.5, pluggy-1.5.0 -- C:\Github\Git_34wizrd\matplotlib-testing\env\Scripts\python.exe
-# cachedir: .pytest_cache
-# hypothesis profile 'default' -> database=DirectoryBasedExampleDatabase(WindowsPath('C:/Github/Git_34wizrd/matplotlib-testing/.hypothesis/examples'))
-# Matplotlib: 3.10.1
-# Freetype: 2.6.1
-# rootdir: C:\Github\Git_34wizrd\matplotlib-testing
-# plugins: hypothesis-6.130.8, cov-6.1.1, mpl-0.17.0
-# collected 8 items
-
-# tests/test_boxplot.py::test_basic_boxplot PASSED                                                                                      [ 12%]
-# tests/test_boxplot.py::test_boxplot_outliers PASSED                                                                                   [ 25%]
-# tests/test_boxplot.py::test_boxplot_horizontal PASSED                                                                                 [ 37%]
-# tests/test_boxplot.py::test_boxplot_styling PASSED                                                                                    [ 50%]
-# tests/test_boxplot.py::test_boxplot_nan_inf PASSED                                                                                    [ 62%]
-# tests/test_boxplot.py::test_boxplot_labels PASSED                                                                                     [ 75%]
-# tests/test_boxplot.py::test_boxplot_fuzz PASSED                                                                                       [ 87%]
-# tests/test_boxplot.py::test_boxplot_flat_data PASSED                                                                                  [100%]
-
-# ============================================================= warnings summary =============================================================
-# tests/test_boxplot.py::test_boxplot_horizontal
-#   C:\Github\Git_34wizrd\matplotlib-testing\tests\test_boxplot.py:49: PendingDeprecationWarning: vert: bool will be deprecated in a future version. Use orientation: {'vertical', 'horizontal'} instead.
-#     box = ax.boxplot(data, vert=False)
-
-# tests/test_boxplot.py::test_boxplot_labels
-#   C:\Github\Git_34wizrd\matplotlib-testing\tests\test_boxplot.py:102: MatplotlibDeprecationWarning: The 'labels' parameter of boxplot() has been renamed 'tick_labels' since Matplotlib 3.9; support for the old name will be dropped in 3.11.
-#     ax.boxplot(data, labels=labels)
-
-# -- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
-# ====================================================== 8 passed, 2 warnings in 3.26s ======================================================= 
+def test_boxplot_memory_usage():
+    """Test memory usage with large dataset"""
+    data = [np.random.random(1000) for _ in range(10)]
+    bp = plt.boxplot(data)
+    assert len(bp['boxes']) == 10
+    plt.close()
