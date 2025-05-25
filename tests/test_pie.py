@@ -1,6 +1,16 @@
 import matplotlib
 matplotlib.use('Agg')  # Use headless backend for testing
 
+"""
+Tests for matplotlib.pyplot.pie()
+
+KNOWN ISSUE: matplotlib.pyplot.pie() crashes when input data contains NaN values
+- With error: ValueError: "cannot convert float NaN to integer"
+- This is inconsistent with other matplotlib functions like bar() which skip NaN values
+- See test_pie_03a_nan_handling() for details on the issue
+- See test_pie_03b_filtered_nan_handling() and test_pie_03c_filtered_nan_handling_numpy() for workarounds
+"""
+
 import matplotlib.pyplot as plt
 import numpy as np
 from hypothesis import given, settings, strategies as st
@@ -47,6 +57,116 @@ def test_pie_03_autopct():
     patches, texts, autotexts = plt.pie(sizes, autopct='%1.1f%%')
     assert len(autotexts) == 3
     assert all('%' in t.get_text() for t in autotexts)
+
+def test_pie_03a_nan_handling():
+    """Test pie chart with NaN values - DOCUMENTS BUG
+    
+    When matplotlib.pyplot.pie() is given input data containing NaN values,
+    it crashes with a ValueError rather than handling them gracefully.
+    
+    This is inconsistent with other matplotlib functions like bar() which skip NaN values.
+    
+    Bug characteristics:
+    - Crashes with: ValueError: cannot convert float NaN to integer
+    - No helpful error message to indicate the issue is with NaN values
+    - No automatic filtering of NaN values
+    
+    See test_pie_03b_filtered_nan_handling() for a workaround.
+    """
+    sizes = [10, 20, float('nan'), 40]
+    labels = ["A", "B", "C", "D"]
+    fig, ax = plt.subplots()
+    
+    # Unlike bar(), pie() doesn't handle NaN values quietly - it raises a ValueError
+    # with an unhelpful error message
+    with pytest.raises(ValueError, match="cannot convert float NaN to integer"):
+        patches, texts = ax.pie(sizes, labels=labels)
+
+def test_pie_03b_filtered_nan_handling():
+    """Test pie chart with filtered NaN values - WORKAROUND for NaN handling bug
+    
+    This test demonstrates the recommended workaround for handling NaN values
+    in matplotlib.pyplot.pie() - pre-filtering the data before passing it to
+    the function.
+    
+    Workaround steps:
+    1. Create lists for valid data and corresponding labels
+    2. Iterate through original data, skipping NaN values
+    3. Use the filtered data with the pie() function
+    
+    This approach allows creating pie charts from data that contains NaN values
+    without triggering the ValueError demonstrated in test_pie_03a_nan_handling().
+    """
+    sizes = [10, 20, float('nan'), 40]
+    labels = ["A", "B", "C", "D"]
+    fig, ax = plt.subplots()
+    
+    # WORKAROUND: Filter out NaN values and corresponding labels
+    valid_sizes = []
+    valid_labels = []
+    for val, label in zip(sizes, labels):
+        if not np.isnan(val):
+            valid_sizes.append(val)
+            valid_labels.append(label)
+    
+    patches, texts = ax.pie(valid_sizes, labels=valid_labels)
+    
+    # Should have 3 wedges after filtering out NaN
+    assert len(patches) == 3
+    assert len(texts) == 3
+    
+    # Verify the label for the NaN value was filtered out
+    text_values = [t.get_text() for t in texts]
+    assert "C" not in text_values
+    assert "A" in text_values
+    assert "B" in text_values
+    assert "D" in text_values
+      # Verify the wedges use the correct values
+    total = sum(valid_sizes)
+    expected_angles = [360 * s / total for s in valid_sizes]
+    for i, patch in enumerate(patches):
+        angle = patch.theta2 - patch.theta1
+        assert abs(angle - expected_angles[i]) < 1e-5  # Use a more relaxed tolerance
+
+def test_pie_03c_filtered_nan_handling_numpy():
+    """Test pie chart with filtered NaN values using numpy - Alternative WORKAROUND
+    
+    This test demonstrates a more pythonic workaround for handling NaN values
+    in matplotlib.pyplot.pie() using numpy's masked array functionality.
+    
+    Workaround steps:
+    1. Use numpy's isnan to create a mask of valid values
+    2. Filter both sizes and labels arrays using this mask
+    3. Use the filtered data with the pie() function
+    
+    This approach is more concise than manual filtering and works well
+    for numpy arrays or lists.
+    """
+    sizes = np.array([10, 20, float('nan'), 40])
+    labels = np.array(["A", "B", "C", "D"])
+    fig, ax = plt.subplots()
+    
+    # ALTERNATIVE WORKAROUND: Use numpy to filter NaN values
+    mask = ~np.isnan(sizes)
+    valid_sizes = sizes[mask]
+    valid_labels = labels[mask]
+    
+    patches, texts = ax.pie(valid_sizes, labels=valid_labels)
+    
+    # Should have 3 wedges after filtering out NaN
+    assert len(patches) == 3
+    assert len(texts) == 3
+    
+    # Verify the label for the NaN value was filtered out
+    text_values = [t.get_text() for t in texts]
+    assert "C" not in text_values
+    
+    # Verify the wedges use the correct values
+    total = sum(valid_sizes)
+    expected_angles = [360 * s / total for s in valid_sizes]
+    for i, patch in enumerate(patches):
+        angle = patch.theta2 - patch.theta1
+        assert abs(angle - expected_angles[i]) < 1e-5  # Use a more relaxed tolerance
 
 def test_pie_04_colors():
     """Test custom colors"""

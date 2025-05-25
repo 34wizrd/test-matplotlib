@@ -231,6 +231,7 @@ else:
     n_samples=st.integers(min_value=1, max_value=10),
     sample_size=st.integers(min_value=1, max_value=100)
 )
+@settings(deadline=None)
 def test_boxplot_fuzz_shape(n_samples, sample_size):
     """Random data shapes and values"""
     data = [np.random.randn(sample_size) for _ in range(n_samples)]

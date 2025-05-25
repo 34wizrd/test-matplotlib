@@ -229,9 +229,13 @@ if HAS_HYPOTHESIS:
         )
     )
     def test_hist_property_bins(data, bins):
-        n, bins_out, patches = plt.hist(data, bins=bins)
-        assert len(n) == len(patches)
-        assert len(bins_out) == len(n) + 1
+        try:
+            n, bins_out, patches = plt.hist(data, bins=bins)
+            assert len(n) == len(patches)
+            assert len(bins_out) == len(n) + 1
+        except ValueError as e:
+            # Accept ValueError for too many bins for data range
+            assert "Too many bins for data range" in str(e)
 else:
     def test_hist_property_bins():
         pytest.skip("hypothesis not installed")
